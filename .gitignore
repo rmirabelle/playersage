@@ -1,0 +1,12 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/libmpv-2.dll
+src-tauri/vendor/
+.vscode/
+.idea/
+.claude/
+icon-pack/
+icon-pack.zip
+*.log
