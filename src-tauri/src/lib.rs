@@ -140,6 +140,14 @@ fn set_video_region(
     Err("PlayerSage currently supports Windows only.".into())
 }
 
+/// Return the first command-line argument that looks like a real file path.
+/// Skips argv[0] (the exe) and any --flag style args.
+fn first_file_arg() -> Option<String> {
+    std::env::args()
+        .skip(1)
+        .find(|a| !a.starts_with('-') && std::path::Path::new(a).is_file())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -181,6 +189,21 @@ pub fn run() {
                 );
 
                 host.attach_player(player.clone());
+
+                // If the app was launched with a file path (e.g. via Windows
+                // "Open with…" / file association), load it immediately.
+                if let Some(path) = first_file_arg() {
+                    let p = player.clone();
+                    let h = host.clone();
+                    // Defer slightly so the webview has a chance to report
+                    // geometry before mpv tries to render — without this, the
+                    // first frame can appear in a tiny default-sized child.
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(150));
+                        let _ = p.load(&path);
+                        h.focus_self();
+                    });
+                }
 
                 let state: State<'_, AppState> = app.state();
                 *state.host.lock() = Some(host);
