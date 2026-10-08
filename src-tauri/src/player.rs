@@ -41,6 +41,9 @@ pub struct PlayerState {
     pub loop_b: Option<f64>,
     /// Whole-file loop (mpv loop-file=inf).
     pub loop_file: bool,
+    /// Stopped: the file is unloaded (black screen) but `path` is kept so
+    /// Play can load it again from the start.
+    pub stopped: bool,
 }
 
 impl PlayerState {
@@ -56,6 +59,7 @@ impl PlayerState {
 pub struct Player {
     mpv: Arc<Mpv>,
     state: Arc<Mutex<PlayerState>>,
+    app: AppHandle,
 }
 
 impl Player {
@@ -154,10 +158,11 @@ impl Player {
                 }
             })?;
 
-        Ok(Self { mpv, state })
+        Ok(Self { mpv, state, app })
     }
 
     pub fn load(&self, path: &str) -> anyhow::Result<()> {
+        self.state.lock().stopped = false;
         mpv_command_args(&self.mpv, &["loadfile", path])
             .map_err(|e| anyhow::anyhow!("loadfile {path}: {e}"))?;
         self.mpv
@@ -174,7 +179,19 @@ impl Player {
         }
     }
 
+    /// If stopped, load the file again. Returns true when it did.
+    fn reload_if_stopped(&self) -> anyhow::Result<bool> {
+        let snap = self.snapshot();
+        match (snap.stopped, snap.path) {
+            (true, Some(path)) => self.load(&path).map(|_| true),
+            _ => Ok(false),
+        }
+    }
+
     pub fn play(&self) -> anyhow::Result<()> {
+        if self.reload_if_stopped()? {
+            return Ok(());
+        }
         self.rewind_if_at_end();
         self.mpv
             .set_property("pause", false)
@@ -188,6 +205,9 @@ impl Player {
     }
 
     pub fn toggle_play_pause(&self) -> anyhow::Result<()> {
+        if self.reload_if_stopped()? {
+            return Ok(());
+        }
         if !self.snapshot().loaded {
             return Ok(());
         }
@@ -312,16 +332,26 @@ impl Player {
             .map_err(|e| anyhow::anyhow!("set speed: {e:?}"))
     }
 
-    /// Pause and return to the start. The file stays loaded so Play works.
+    /// Unload the file so the screen goes black, like a classic player's
+    /// Stop. The path is kept so Play loads it again from the start.
     pub fn stop(&self) -> anyhow::Result<()> {
         if !self.snapshot().loaded {
             return Ok(());
         }
-        self.mpv
-            .set_property("pause", true)
-            .map_err(|e| anyhow::anyhow!("stop: {e:?}"))?;
-        mpv_command_args(&self.mpv, &["seek", "0", "absolute"])
-            .map_err(|e| anyhow::anyhow!("stop: {e}"))
+        // Pause first so load()'s unpause fires an event that resets `playing`.
+        let _ = self.mpv.set_property("pause", true);
+        mpv_command_args(&self.mpv, &["stop"])
+            .map_err(|e| anyhow::anyhow!("stop: {e}"))?;
+        let snap = {
+            let mut s = self.state.lock();
+            s.loaded = false;
+            s.stopped = true;
+            s.playing = false;
+            s.position = 0.0;
+            s.clone()
+        };
+        let _ = self.app.emit("player-state", snap);
+        Ok(())
     }
 
     pub fn set_loop_a(&self) -> anyhow::Result<()> {

@@ -19,6 +19,7 @@ type PlayerState = {
   loop_a: number | null;
   loop_b: number | null;
   loop_file: boolean;
+  stopped: boolean;
 };
 
 const SPEEDS: { value: number; label: string }[] = [
@@ -54,6 +55,7 @@ export default function App() {
     loop_a: null,
     loop_b: null,
     loop_file: false,
+    stopped: false,
   });
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -227,7 +229,7 @@ export default function App() {
   };
 
   const togglePlay = async () => {
-    if (!state.loaded) return;
+    if (!state.loaded && !state.stopped) return;
     if (state.playing) await invoke("pause");
     else await invoke("play");
   };
@@ -244,7 +246,7 @@ export default function App() {
         id="video-region"
         className="flex-1 min-h-0 bg-black relative flex items-center justify-center"
       >
-        {!state.loaded && (
+        {!state.loaded && !state.stopped && (
           <div className="text-muted-foreground text-sm pointer-events-none">
             Open a video to begin
           </div>
@@ -265,14 +267,14 @@ export default function App() {
           onClick={() => invoke("stop").catch(() => {})}
           disabled={!state.loaded}
           className="flex items-center justify-center w-9 h-9 rounded-md bg-muted hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed transition"
-          title="Stop (return to start)"
+          title="Stop"
         >
           <Square size={14} />
         </button>
 
         <button
           onClick={togglePlay}
-          disabled={!state.loaded}
+          disabled={!state.loaded && !state.stopped}
           className="flex items-center justify-center w-9 h-9 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition"
           title={state.playing ? "Pause" : "Play"}
         >
