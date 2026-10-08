@@ -56,7 +56,6 @@ impl PlayerState {
 pub struct Player {
     mpv: Arc<Mpv>,
     state: Arc<Mutex<PlayerState>>,
-    app: AppHandle,
 }
 
 impl Player {
@@ -155,7 +154,7 @@ impl Player {
                 }
             })?;
 
-        Ok(Self { mpv, state, app })
+        Ok(Self { mpv, state })
     }
 
     pub fn load(&self, path: &str) -> anyhow::Result<()> {
@@ -313,24 +312,16 @@ impl Player {
             .map_err(|e| anyhow::anyhow!("set speed: {e:?}"))
     }
 
-    /// Unload the current file and clear loaded state. App remains running.
+    /// Pause and return to the start. The file stays loaded so Play works.
     pub fn stop(&self) -> anyhow::Result<()> {
-        // Clear any A/B loop so a future load starts clean.
-        self.clear_loop();
-        mpv_command_args(&self.mpv, &["stop"])
-            .map_err(|e| anyhow::anyhow!("stop: {e}"))?;
-        let snap = {
-            let mut s = self.state.lock();
-            s.loaded = false;
-            s.path = None;
-            s.position = 0.0;
-            s.duration = 0.0;
-            s.loop_a = None;
-            s.loop_b = None;
-            s.clone()
-        };
-        let _ = self.app.emit("player-state", snap);
-        Ok(())
+        if !self.snapshot().loaded {
+            return Ok(());
+        }
+        self.mpv
+            .set_property("pause", true)
+            .map_err(|e| anyhow::anyhow!("stop: {e:?}"))?;
+        mpv_command_args(&self.mpv, &["seek", "0", "absolute"])
+            .map_err(|e| anyhow::anyhow!("stop: {e}"))
     }
 
     pub fn set_loop_a(&self) -> anyhow::Result<()> {

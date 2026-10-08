@@ -1,6 +1,6 @@
 [package]
 name = "playersage"
-version = "0.1.3"
+version = "0.1.4"
 description = "Player Sage — a video player"
 authors = ["Rob Mirabelle"]
 edition = "2021"

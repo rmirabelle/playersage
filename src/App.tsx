@@ -265,7 +265,7 @@ export default function App() {
           onClick={() => invoke("stop").catch(() => {})}
           disabled={!state.loaded}
           className="flex items-center justify-center w-9 h-9 rounded-md bg-muted hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed transition"
-          title="Close current video"
+          title="Stop (return to start)"
         >
           <Square size={14} />
         </button>
