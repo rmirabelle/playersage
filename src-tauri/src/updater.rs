@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 /// GitHub repo that hosts release artifacts.
-/// TODO: confirm name/owner before first publish.
 const REPO_API: &str = "https://api.github.com/repos/rmirabelle/playersage/releases/latest";
 const USER_AGENT: &str = "PlayerSage-Updater";
 
@@ -86,24 +85,16 @@ fn pick_installer_asset(assets: &[GhAsset]) -> Option<&GhAsset> {
 #[tauri::command]
 pub async fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     let current = current_version().to_string();
-    let release = match fetch_latest().await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("[updater] check failed: {e:#}");
-            return Ok(None);
-        }
-    };
+    let release = fetch_latest().await.map_err(|e| {
+        eprintln!("[updater] check failed: {e:#}");
+        format!("Could not check for updates: {e:#}")
+    })?;
     let latest = release.tag_name.trim_start_matches('v').to_string();
     if !is_newer(&latest, &current) {
         return Ok(None);
     }
-    let asset = match pick_installer_asset(&release.assets) {
-        Some(a) => a,
-        None => {
-            eprintln!("[updater] no installer asset on latest release");
-            return Ok(None);
-        }
-    };
+    let asset = pick_installer_asset(&release.assets)
+        .ok_or_else(|| format!("Release v{latest} has no installer to download."))?;
     Ok(Some(UpdateInfo {
         current_version: current,
         latest_version: latest,

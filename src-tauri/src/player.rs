@@ -39,6 +39,8 @@ pub struct PlayerState {
     pub speed: f64,
     pub loop_a: Option<f64>,
     pub loop_b: Option<f64>,
+    /// Whole-file loop (mpv loop-file=inf).
+    pub loop_file: bool,
 }
 
 impl PlayerState {
@@ -101,6 +103,7 @@ impl Player {
                     // ab-loop-a/b can hold "no" (unset) or a number, so observe as String.
                     let _ = ev.observe_property("ab-loop-a", Format::String, 0);
                     let _ = ev.observe_property("ab-loop-b", Format::String, 0);
+                    let _ = ev.observe_property("loop-file", Format::String, 0);
 
                     loop {
                         let Some(evt_res) = ev.wait_event(-1.0) else {
@@ -135,6 +138,9 @@ impl Player {
                                     ("ab-loop-b", PropertyData::Str(v)) => {
                                         s.loop_b = v.parse::<f64>().ok();
                                     }
+                                    ("loop-file", PropertyData::Str(v)) => {
+                                        s.loop_file = v != "no";
+                                    }
                                     _ => {}
                                 }
                                 let snap = s.clone();
@@ -161,7 +167,16 @@ impl Player {
         Ok(())
     }
 
+    /// With keep-open, mpv pauses on the last frame at end of file and
+    /// unpausing there does nothing. Rewind first so Play replays the file.
+    fn rewind_if_at_end(&self) {
+        if self.mpv.get_property::<bool>("eof-reached").unwrap_or(false) {
+            let _ = mpv_command_args(&self.mpv, &["seek", "0", "absolute"]);
+        }
+    }
+
     pub fn play(&self) -> anyhow::Result<()> {
+        self.rewind_if_at_end();
         self.mpv
             .set_property("pause", false)
             .map_err(|e| anyhow::anyhow!("play: {e:?}"))
@@ -178,6 +193,9 @@ impl Player {
             return Ok(());
         }
         let paused = self.mpv.get_property::<bool>("pause").unwrap_or(false);
+        if paused {
+            self.rewind_if_at_end();
+        }
         self.mpv
             .set_property("pause", !paused)
             .map_err(|e| anyhow::anyhow!("toggle: {e:?}"))
@@ -333,6 +351,13 @@ impl Player {
         self.mpv
             .set_property("ab-loop-b", format!("{t}").as_str())
             .map_err(|e| anyhow::anyhow!("set ab-loop-b: {e:?}"))
+    }
+
+    pub fn toggle_loop_file(&self) -> anyhow::Result<()> {
+        let on = self.snapshot().loop_file;
+        self.mpv
+            .set_property("loop-file", if on { "no" } else { "inf" })
+            .map_err(|e| anyhow::anyhow!("set loop-file: {e:?}"))
     }
 
     pub fn clear_loop(&self) {

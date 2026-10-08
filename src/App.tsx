@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Pause, Play, Square, X, ZoomIn } from "lucide-react";
+import { Download, FolderOpen, Pause, Play, Repeat, Square, X, ZoomIn } from "lucide-react";
 import { AboutDialog } from "./components/AboutDialog";
 import { checkForUpdate, type UpdateInfo } from "./lib/updater";
 
@@ -18,6 +18,7 @@ type PlayerState = {
   speed: number;
   loop_a: number | null;
   loop_b: number | null;
+  loop_file: boolean;
 };
 
 const SPEEDS: { value: number; label: string }[] = [
@@ -52,6 +53,7 @@ export default function App() {
     speed: 1,
     loop_a: null,
     loop_b: null,
+    loop_file: false,
   });
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -152,6 +154,14 @@ export default function App() {
     };
   }, []);
 
+  /**
+   * The native video window sits above the webview, so it would cover the
+   * About dialog. Hide it while the dialog is open.
+   */
+  useEffect(() => {
+    invoke("set_video_visible", { visible: !aboutOpen }).catch(() => {});
+  }, [aboutOpen]);
+
   // Silent startup update check — fires once, results auto-populate the About dialog.
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +205,8 @@ export default function App() {
         invoke("set_loop_b").catch(() => {});
       } else if (e.key.toLowerCase() === "c") {
         invoke("clear_loop").catch(() => {});
+      } else if (e.key.toLowerCase() === "l") {
+        invoke("toggle_loop_file").catch(() => {});
       }
     };
     window.addEventListener("keydown", onKey);
@@ -326,6 +338,19 @@ export default function App() {
           )}
         </div>
 
+        <button
+          onClick={() => invoke("toggle_loop_file").catch(() => {})}
+          className={
+            "flex items-center justify-center w-8 h-7 rounded-md transition " +
+            (state.loop_file
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted/60 text-muted-foreground hover:bg-accent")
+          }
+          title={state.loop_file ? "Loop whole video: on (L)" : "Loop whole video: off (L)"}
+        >
+          <Repeat size={14} />
+        </button>
+
         <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted/60">
           {SPEEDS.map((s) => {
             const active = Math.abs((state.speed || 1) - s.value) < 0.001;
@@ -357,6 +382,16 @@ export default function App() {
           <ZoomIn size={14} />
           {Math.round((state.zoom || 1) * 100)}%
         </button>
+        {startupUpdate && (
+          <button
+            onClick={() => setAboutOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition"
+            title={`Version ${startupUpdate.latestVersion} is available`}
+          >
+            <Download size={14} />
+            Update
+          </button>
+        )}
       </div>
 
       <AboutDialog

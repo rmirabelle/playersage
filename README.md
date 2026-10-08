@@ -22,6 +22,7 @@ A focused Windows video player built for inspecting frames closely. Powered by l
 | `A`                    | Set loop start at current time                        |
 | `B`                    | Set loop end at current time (loop activates)         |
 | `C`                    | Clear loop                                            |
+| `L`                    | Toggle loop of whole video                            |
 | `R` or `0`             | Reset zoom & pan                                      |
 
 ## Mouse

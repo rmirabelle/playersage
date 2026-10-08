@@ -92,6 +92,12 @@ fn clear_loop(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn toggle_loop_file(state: State<'_, AppState>) -> Result<(), String> {
+    let player = state.player.lock().clone().ok_or("player not ready")?;
+    player.toggle_loop_file().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn stop(state: State<'_, AppState>) -> Result<(), String> {
     let player = state.player.lock().clone().ok_or("player not ready")?;
     player.stop().map_err(|e| e.to_string())
@@ -127,6 +133,18 @@ fn set_video_region(
     }
     Ok(())
 }
+
+#[cfg(windows)]
+#[tauri::command]
+fn set_video_visible(visible: bool, state: State<'_, AppState>) {
+    if let Some(host) = state.host.lock().as_ref() {
+        host.set_visible(visible);
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn set_video_visible(_visible: bool) {}
 
 #[cfg(not(windows))]
 #[tauri::command]
@@ -222,10 +240,12 @@ pub fn run() {
             set_loop_a,
             set_loop_b,
             clear_loop,
+            toggle_loop_file,
             stop,
             seek_relative,
             get_state,
             set_video_region,
+            set_video_visible,
             updater::check_for_update,
             updater::download_and_run_installer,
             updater::get_app_version
