@@ -9,7 +9,10 @@
  * GWLP_USERDATA so the wndproc can reach the player without globals.
  */
 use std::ptr;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
+
+use tauri::Emitter;
 
 use windows::core::{implement, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, POINTL, WPARAM};
@@ -56,7 +59,17 @@ fn wide(s: &str) -> Vec<u16> {
 struct HostData {
     player: PlayerSlot,
     drag: parking_lot::Mutex<Option<DragState>>,
+    /**
+     * Last pointer zone sent to the UI: 0 = away from the bottom edge,
+     * 1 = near it, ZONE_UNKNOWN = not sent yet. Used to show the control
+     * bar in full screen.
+     */
+    pointer_zone: AtomicU8,
 }
+
+const ZONE_UNKNOWN: u8 = 2;
+/// Height of the strip at the bottom of the video that reveals the controls.
+const BOTTOM_ZONE_PX: i32 = 96;
 
 struct DragState {
     /// Position where the button went down (client coords).
@@ -152,6 +165,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         }
         WM_MOUSEMOVE => {
             if let Some(d) = data {
+                let y = hiword_signed(l.0 as usize);
+                let (_, ch) = client_size(hwnd);
+                let zone = (y >= ch - BOTTOM_ZONE_PX) as u8;
+                if d.pointer_zone.swap(zone, Ordering::Relaxed) != zone {
+                    if let Some(p) = d.player.read().as_ref() {
+                        let _ = p.app_handle().emit("video-pointer", zone == 1);
+                    }
+                }
                 let mut drag_guard = d.drag.lock();
                 if let Some(state) = drag_guard.as_mut() {
                     let x = loword_signed(l.0 as usize);
@@ -172,6 +193,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         WM_KEYDOWN => {
             // VK codes: SPACE=0x20, LEFT=0x25, RIGHT=0x27, '0'=0x30,
             // 'A'=0x41, 'B'=0x42, 'C'=0x43, 'R'=0x52.
+            // 'F'=0x46 / F11=0x7A toggle full screen, ESC=0x1B leaves it.
             let vk = w.0 as u32;
             if let Some(d) = data {
                 let player = d.player.read().as_ref().cloned();
@@ -195,6 +217,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                         }
                         0x43 => {
                             p.clear_loop();
+                            return LRESULT(0);
+                        }
+                        0x46 | 0x7A | 0x1B => {
+                            // Run off the UI thread to avoid re-entering the event loop.
+                            let app = p.app_handle();
+                            let target = if vk == 0x1B { Some(false) } else { None };
+                            std::thread::spawn(move || crate::apply_fullscreen(&app, target));
                             return LRESULT(0);
                         }
                         0x25 | 0x27 => {
@@ -293,6 +322,7 @@ impl VideoHost {
         let data = Box::into_raw(Box::new(HostData {
             player: player_slot.clone(),
             drag: parking_lot::Mutex::new(None),
+            pointer_zone: AtomicU8::new(ZONE_UNKNOWN),
         })) as *const HostData;
 
         let drop_target: IDropTarget = VideoDropTarget {
@@ -359,6 +389,13 @@ impl VideoHost {
         unsafe {
             let _ = ShowWindow(self.hwnd, if visible { SW_SHOW } else { SW_HIDE });
         }
+    }
+
+    /// Forget the last pointer zone so the next mouse move is always sent.
+    pub fn reset_pointer_zone(&self) {
+        unsafe { &*self.data }
+            .pointer_zone
+            .store(ZONE_UNKNOWN, Ordering::Relaxed);
     }
 
     pub fn attach_player(&self, player: Arc<Player>) {

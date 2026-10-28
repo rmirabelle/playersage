@@ -146,6 +146,44 @@ fn set_video_visible(visible: bool, state: State<'_, AppState>) {
 #[tauri::command]
 fn set_video_visible(_visible: bool) {}
 
+/**
+ * Enter or leave full screen; `None` toggles. The menu bar is hidden in
+ * full screen so the video can fill the whole display. Emits
+ * "fullscreen-changed" so the UI can hide or show its control bar.
+ */
+pub(crate) fn apply_fullscreen(app: &tauri::AppHandle, fullscreen: Option<bool>) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let current = win.is_fullscreen().unwrap_or(false);
+    let target = fullscreen.unwrap_or(!current);
+    if target == current {
+        return;
+    }
+    if target {
+        let _ = win.hide_menu();
+        let _ = win.set_fullscreen(true);
+    } else {
+        let _ = win.set_fullscreen(false);
+        let _ = win.show_menu();
+    }
+    #[cfg(windows)]
+    if let Some(host) = app.state::<AppState>().host.lock().as_ref() {
+        host.reset_pointer_zone();
+    }
+    let _ = app.emit("fullscreen-changed", target);
+}
+
+#[tauri::command]
+fn toggle_fullscreen(app: tauri::AppHandle) {
+    apply_fullscreen(&app, None);
+}
+
+#[tauri::command]
+fn set_fullscreen(fullscreen: bool, app: tauri::AppHandle) {
+    apply_fullscreen(&app, Some(fullscreen));
+}
+
 #[cfg(not(windows))]
 #[tauri::command]
 fn set_video_region(
@@ -171,7 +209,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Do not restore full screen on the next launch.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         .manage(AppState {
             player: Mutex::new(None),
             #[cfg(windows)]
@@ -246,6 +292,8 @@ pub fn run() {
             get_state,
             set_video_region,
             set_video_visible,
+            toggle_fullscreen,
+            set_fullscreen,
             updater::check_for_update,
             updater::download_and_run_installer,
             updater::get_app_version

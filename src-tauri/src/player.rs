@@ -243,6 +243,10 @@ impl Player {
         self.state.lock().clone()
     }
 
+    pub fn app_handle(&self) -> AppHandle {
+        self.app.clone()
+    }
+
     fn get_f64(&self, name: &str) -> Option<f64> {
         self.mpv.get_property::<f64>(name).ok()
     }

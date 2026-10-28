@@ -4,7 +4,18 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Download, FolderOpen, Pause, Play, Repeat, Square, X, ZoomIn } from "lucide-react";
+import {
+  Download,
+  FolderOpen,
+  Maximize,
+  Minimize,
+  Pause,
+  Play,
+  Repeat,
+  Square,
+  X,
+  ZoomIn,
+} from "lucide-react";
 import { AboutDialog } from "./components/AboutDialog";
 import { checkForUpdate, type UpdateInfo } from "./lib/updater";
 
@@ -60,6 +71,9 @@ export default function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [startupUpdate, setStartupUpdate] = useState<UpdateInfo | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [controlsShown, setControlsShown] = useState(false);
+  const hideTimerRef = useRef<number | null>(null);
 
   const reportGeometry = useCallback(async () => {
     const el = videoRegionRef.current;
@@ -156,6 +170,41 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const p = listen<boolean>("fullscreen-changed", (e) => {
+      setFullscreen(e.payload);
+      setControlsShown(false);
+    });
+    return () => {
+      p.then((un) => un());
+    };
+  }, []);
+
+  /**
+   * In full screen the control bar is hidden. The native video window
+   * reports when the pointer moves near its bottom edge: show the bar then,
+   * and hide it again shortly after the pointer moves away.
+   */
+  useEffect(() => {
+    const p = listen<boolean>("video-pointer", (e) => {
+      if (hideTimerRef.current !== null) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+      if (e.payload) {
+        setControlsShown(true);
+      } else {
+        hideTimerRef.current = window.setTimeout(() => {
+          hideTimerRef.current = null;
+          setControlsShown(false);
+        }, 600);
+      }
+    });
+    return () => {
+      p.then((un) => un());
+    };
+  }, []);
+
   /**
    * The native video window sits above the webview, so it would cover the
    * About dialog. Hide it while the dialog is open.
@@ -209,6 +258,11 @@ export default function App() {
         invoke("clear_loop").catch(() => {});
       } else if (e.key.toLowerCase() === "l") {
         invoke("toggle_loop_file").catch(() => {});
+      } else if (e.key.toLowerCase() === "f" || e.key === "F11") {
+        e.preventDefault();
+        invoke("toggle_fullscreen").catch(() => {});
+      } else if (e.key === "Escape") {
+        invoke("set_fullscreen", { fullscreen: false }).catch(() => {});
       }
     };
     window.addEventListener("keydown", onKey);
@@ -253,7 +307,12 @@ export default function App() {
         )}
       </div>
 
-      <div className="border-t border-border bg-card px-4 py-3 flex items-center gap-3">
+      <div
+        className={
+          "border-t border-border bg-card px-4 py-3 items-center gap-3 " +
+          (fullscreen && !controlsShown ? "hidden" : "flex")
+        }
+      >
         <button
           onClick={openFile}
           className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted hover:bg-accent text-sm transition"
@@ -383,6 +442,14 @@ export default function App() {
         >
           <ZoomIn size={14} />
           {Math.round((state.zoom || 1) * 100)}%
+        </button>
+
+        <button
+          onClick={() => invoke("toggle_fullscreen").catch(() => {})}
+          className="flex items-center justify-center w-8 h-7 rounded-md bg-muted/60 text-muted-foreground hover:bg-accent transition"
+          title={fullscreen ? "Exit full screen (F or Esc)" : "Full screen (F)"}
+        >
+          {fullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
         </button>
         {startupUpdate && (
           <button
