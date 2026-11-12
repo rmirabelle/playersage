@@ -6,8 +6,27 @@ use libmpv2::{
     Format, Mpv,
 };
 use parking_lot::Mutex;
-use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
+
+/**
+ * Playback settings that carry over to the next video, also after the
+ * app restarts. A-B loop points are not kept: they are times in one video.
+ */
+#[derive(Serialize, Deserialize)]
+struct PlaybackPrefs {
+    speed: f64,
+    loop_file: bool,
+}
+
+fn prefs_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    Some(app.path().app_config_dir().ok()?.join("playback.json"))
+}
+
+fn read_prefs(app: &AppHandle) -> Option<PlaybackPrefs> {
+    let text = std::fs::read_to_string(prefs_path(app)?).ok()?;
+    serde_json::from_str(&text).ok()
+}
 
 /// Call mpv_command with a proper argv array.
 /// Avoids libmpv2::Mpv::command, which joins args with spaces and passes to
@@ -79,6 +98,11 @@ impl Player {
             Ok(())
         })
         .map_err(|e| anyhow::anyhow!("mpv init failed: {e:?}"))?;
+
+        if let Some(prefs) = read_prefs(&app) {
+            let _ = mpv.set_property("speed", prefs.speed.clamp(0.0625, 16.0));
+            let _ = mpv.set_property("loop-file", if prefs.loop_file { "inf" } else { "no" });
+        }
 
         let ctx_addr: usize = mpv.ctx.as_ptr() as usize;
         let mpv = Arc::new(mpv);
@@ -333,7 +357,30 @@ impl Player {
         let clamped = speed.clamp(0.0625, 16.0);
         self.mpv
             .set_property("speed", clamped)
-            .map_err(|e| anyhow::anyhow!("set speed: {e:?}"))
+            .map_err(|e| anyhow::anyhow!("set speed: {e:?}"))?;
+        self.save_prefs();
+        Ok(())
+    }
+
+    /// Write the current speed and whole-video loop setting to disk.
+    fn save_prefs(&self) {
+        let prefs = PlaybackPrefs {
+            speed: self.get_f64("speed").unwrap_or(1.0),
+            loop_file: self
+                .mpv
+                .get_property::<String>("loop-file")
+                .map(|v| v != "no")
+                .unwrap_or(false),
+        };
+        let Some(path) = prefs_path(&self.app) else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(text) = serde_json::to_string(&prefs) {
+            let _ = std::fs::write(path, text);
+        }
     }
 
     /// Unload the file so the screen goes black, like a classic player's
@@ -382,7 +429,9 @@ impl Player {
         let on = self.snapshot().loop_file;
         self.mpv
             .set_property("loop-file", if on { "no" } else { "inf" })
-            .map_err(|e| anyhow::anyhow!("set loop-file: {e:?}"))
+            .map_err(|e| anyhow::anyhow!("set loop-file: {e:?}"))?;
+        self.save_prefs();
+        Ok(())
     }
 
     pub fn clear_loop(&self) {
