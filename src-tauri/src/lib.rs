@@ -98,6 +98,13 @@ fn toggle_loop_file(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_play_next(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let player = state.player.lock().clone().ok_or("player not ready")?;
+    player.set_play_next(enabled);
+    Ok(())
+}
+
+#[tauri::command]
 fn stop(state: State<'_, AppState>) -> Result<(), String> {
     let player = state.player.lock().clone().ok_or("player not ready")?;
     player.stop().map_err(|e| e.to_string())
@@ -287,6 +294,7 @@ pub fn run() {
             set_loop_b,
             clear_loop,
             toggle_loop_file,
+            set_play_next,
             stop,
             seek_relative,
             get_state,

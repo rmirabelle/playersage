@@ -30,6 +30,7 @@ type PlayerState = {
   loop_a: number | null;
   loop_b: number | null;
   loop_file: boolean;
+  play_next: boolean;
   stopped: boolean;
 };
 
@@ -66,6 +67,7 @@ export default function App() {
     loop_a: null,
     loop_b: null,
     loop_file: false,
+    play_next: false,
     stopped: false,
   });
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -411,6 +413,22 @@ export default function App() {
         >
           <Repeat size={14} />
         </button>
+
+        <label
+          className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap cursor-pointer select-none"
+          title="At the end of a video, play the next video in the same folder"
+        >
+          <input
+            type="checkbox"
+            checked={state.play_next}
+            onChange={(e) => {
+              invoke("set_play_next", { enabled: e.target.checked }).catch(() => {});
+              e.target.blur();
+            }}
+            className="accent-[var(--color-primary)] cursor-pointer"
+          />
+          Play Next
+        </label>
 
         <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted/60">
           {SPEEDS.map((s) => {

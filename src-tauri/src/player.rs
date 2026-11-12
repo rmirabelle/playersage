@@ -17,6 +17,78 @@ use tauri::{AppHandle, Emitter, Manager};
 struct PlaybackPrefs {
     speed: f64,
     loop_file: bool,
+    #[serde(default)]
+    play_next: bool,
+}
+
+const VIDEO_EXTENSIONS: [&str; 6] = ["mov", "mp4", "m4v", "mkv", "webm", "avi"];
+
+/**
+ * Compare two file names the way Windows Explorer does: ignore case, and
+ * compare runs of digits as numbers, so "2.mp4" comes before "10.mp4".
+ */
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let a: Vec<char> = a.to_lowercase().chars().collect();
+    let b: Vec<char> = b.to_lowercase().chars().collect();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if a[i].is_ascii_digit() && b[j].is_ascii_digit() {
+            let (si, sj) = (i, j);
+            while i < a.len() && a[i].is_ascii_digit() {
+                i += 1;
+            }
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            let da: String = a[si..i].iter().collect();
+            let db: String = b[sj..j].iter().collect();
+            let (da, db) = (da.trim_start_matches('0'), db.trim_start_matches('0'));
+            let ord = da.len().cmp(&db.len()).then_with(|| da.cmp(db));
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        } else {
+            if a[i] != b[j] {
+                return a[i].cmp(&b[j]);
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    (a.len() - i).cmp(&(b.len() - j))
+}
+
+/**
+ * The video that follows `path` in the same folder, in file-name order.
+ * Returns None when `path` is the last video in the folder.
+ */
+fn next_video(path: &str) -> Option<String> {
+    let p = std::path::Path::new(path);
+    let current = p.file_name()?.to_string_lossy().to_lowercase();
+    let dir = match p.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| {
+            std::path::Path::new(n)
+                .extension()
+                .map(|x| {
+                    let x = x.to_string_lossy().to_lowercase();
+                    VIDEO_EXTENSIONS.contains(&x.as_str())
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    names.sort_by(|a, b| natural_cmp(a, b));
+    let idx = names.iter().position(|n| n.to_lowercase() == current)?;
+    let next = names.get(idx + 1)?;
+    Some(dir.join(next).to_string_lossy().into_owned())
 }
 
 fn prefs_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -60,6 +132,8 @@ pub struct PlayerState {
     pub loop_b: Option<f64>,
     /// Whole-file loop (mpv loop-file=inf).
     pub loop_file: bool,
+    /// At the end of a video, play the next video in the same folder.
+    pub play_next: bool,
     /// Stopped: the file is unloaded (black screen) but `path` is kept so
     /// Play can load it again from the start.
     pub stopped: bool,
@@ -99,14 +173,16 @@ impl Player {
         })
         .map_err(|e| anyhow::anyhow!("mpv init failed: {e:?}"))?;
 
+        let mut initial = PlayerState::new();
         if let Some(prefs) = read_prefs(&app) {
             let _ = mpv.set_property("speed", prefs.speed.clamp(0.0625, 16.0));
             let _ = mpv.set_property("loop-file", if prefs.loop_file { "inf" } else { "no" });
+            initial.play_next = prefs.play_next;
         }
 
         let ctx_addr: usize = mpv.ctx.as_ptr() as usize;
         let mpv = Arc::new(mpv);
-        let state = Arc::new(Mutex::new(PlayerState::new()));
+        let state = Arc::new(Mutex::new(initial));
 
         let app_for_thread = app.clone();
         std::thread::Builder::new()
@@ -114,6 +190,7 @@ impl Player {
             .spawn({
                 let state = state.clone();
                 let app = app_for_thread;
+                let mpv = mpv.clone();
                 move || {
                     let ctx = std::ptr::NonNull::new(ctx_addr as *mut libmpv2_sys::mpv_handle)
                         .expect("mpv handle is non-null");
@@ -131,6 +208,7 @@ impl Player {
                     let _ = ev.observe_property("ab-loop-a", Format::String, 0);
                     let _ = ev.observe_property("ab-loop-b", Format::String, 0);
                     let _ = ev.observe_property("loop-file", Format::String, 0);
+                    let _ = ev.observe_property("eof-reached", Format::Flag, 0);
 
                     loop {
                         let Some(evt_res) = ev.wait_event(-1.0) else {
@@ -138,8 +216,14 @@ impl Player {
                         };
                         match evt_res {
                             Ok(Event::PropertyChange { name, change, .. }) => {
+                                let mut next: Option<String> = None;
                                 let mut s = state.lock();
                                 match (name, change) {
+                                    ("eof-reached", PropertyData::Flag(true)) => {
+                                        if s.play_next {
+                                            next = s.path.as_deref().and_then(next_video);
+                                        }
+                                    }
                                     ("pause", PropertyData::Flag(paused)) => {
                                         s.playing = !paused;
                                     }
@@ -173,6 +257,12 @@ impl Player {
                                 let snap = s.clone();
                                 drop(s);
                                 let _ = app.emit("player-state", snap);
+                                if let Some(path) = next {
+                                    // mpv pauses at the end of a file, so unpause after the load.
+                                    if mpv_command_args(&mpv, &["loadfile", &path]).is_ok() {
+                                        let _ = mpv.set_property("pause", false);
+                                    }
+                                }
                             }
                             Ok(Event::Shutdown) => break,
                             Ok(_) => {}
@@ -362,9 +452,20 @@ impl Player {
         Ok(())
     }
 
-    /// Write the current speed and whole-video loop setting to disk.
+    pub fn set_play_next(&self, enabled: bool) {
+        let snap = {
+            let mut s = self.state.lock();
+            s.play_next = enabled;
+            s.clone()
+        };
+        let _ = self.app.emit("player-state", snap);
+        self.save_prefs();
+    }
+
+    /// Write the current speed, loop and play-next settings to disk.
     fn save_prefs(&self) {
         let prefs = PlaybackPrefs {
+            play_next: self.state.lock().play_next,
             speed: self.get_f64("speed").unwrap_or(1.0),
             loop_file: self
                 .mpv
