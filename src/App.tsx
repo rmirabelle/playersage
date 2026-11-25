@@ -17,6 +17,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 import { AboutDialog } from "./components/AboutDialog";
+import { Scrubber } from "./components/Scrubber";
 import { checkForUpdate, type UpdateInfo } from "./lib/updater";
 
 type PlayerState = {
@@ -290,11 +291,6 @@ export default function App() {
     else await invoke("play");
   };
 
-  const onScrub = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const target = Number(e.target.value);
-    await invoke("seek", { seconds: target });
-  };
-
   return (
     <div className="h-full w-full flex flex-col bg-background text-foreground">
       <div
@@ -346,15 +342,12 @@ export default function App() {
           {formatTime(state.position)}
         </span>
 
-        <input
-          type="range"
-          min={0}
-          max={state.duration || 0}
-          step={0.01}
-          value={state.position}
-          onChange={onScrub}
+        <Scrubber
+          position={state.position}
+          duration={state.duration}
+          loopA={state.loop_a}
+          loopB={state.loop_b}
           disabled={!state.loaded}
-          className="flex-1 accent-[var(--color-primary)] disabled:opacity-40"
         />
 
         <span className="text-xs tabular-nums text-muted-foreground w-20">

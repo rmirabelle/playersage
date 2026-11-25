@@ -513,7 +513,40 @@ impl Player {
         let t = self.get_f64("time-pos").unwrap_or(0.0);
         self.mpv
             .set_property("ab-loop-a", format!("{t}").as_str())
-            .map_err(|e| anyhow::anyhow!("set ab-loop-a: {e:?}"))
+            .map_err(|e| anyhow::anyhow!("set ab-loop-a: {e:?}"))?;
+        // With no B point yet, put B at the end so both handles show at once.
+        let b_unset = self
+            .mpv
+            .get_property::<String>("ab-loop-b")
+            .map(|v| v.parse::<f64>().is_err())
+            .unwrap_or(true);
+        if b_unset {
+            if let Some(d) = self.get_f64("duration").filter(|d| *d > t) {
+                let _ = self.mpv.set_property("ab-loop-b", format!("{d}").as_str());
+            }
+        }
+        Ok(())
+    }
+
+    /**
+     * Move one loop point to `seconds` (from a dragged handle), and show
+     * that exact frame so the user can see where the point is.
+     */
+    pub fn set_loop_point(&self, which: &str, seconds: f64) -> anyhow::Result<()> {
+        if !self.snapshot().loaded {
+            return Ok(());
+        }
+        let prop = match which {
+            "a" => "ab-loop-a",
+            "b" => "ab-loop-b",
+            _ => anyhow::bail!("unknown loop point: {which}"),
+        };
+        let t = seconds.max(0.0);
+        self.mpv
+            .set_property(prop, format!("{t}").as_str())
+            .map_err(|e| anyhow::anyhow!("set {prop}: {e:?}"))?;
+        mpv_command_args(&self.mpv, &["seek", &format!("{t}"), "absolute+exact"])
+            .map_err(|e| anyhow::anyhow!("seek: {e}"))
     }
 
     pub fn set_loop_b(&self) -> anyhow::Result<()> {

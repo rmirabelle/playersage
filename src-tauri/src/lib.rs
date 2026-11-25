@@ -85,6 +85,12 @@ fn set_loop_b(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_loop_point(which: String, seconds: f64, state: State<'_, AppState>) -> Result<(), String> {
+    let player = state.player.lock().clone().ok_or("player not ready")?;
+    player.set_loop_point(&which, seconds).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn clear_loop(state: State<'_, AppState>) -> Result<(), String> {
     let player = state.player.lock().clone().ok_or("player not ready")?;
     player.clear_loop();
@@ -292,6 +298,7 @@ pub fn run() {
             set_speed,
             set_loop_a,
             set_loop_b,
+            set_loop_point,
             clear_loop,
             toggle_loop_file,
             set_play_next,
